@@ -1,5 +1,13 @@
 Resources for running Linux 5.15.189 on the MultiTech FaxFinder FF430 and FF830
 
+FaxFinder FF430 specs:
+- Intel IXP430 CPU (ARM, big-endian)
+- 256MB RAM
+- 16MB Flash w/ RedBoot
+- 2GB CF card on the IXP expansion bus, no IRQ
+- 10/100 ethernet (IXP's "EthB") with Micrel PHY on MDIO 1
+- Exar XR17D154 Quad UART chip on PCI "slot 13", IRQ on GPIO7
+
 Working:
 - Boot to command line
 - CF card connected to IXP430 expansion bus in polling mode
