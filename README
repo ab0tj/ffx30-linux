@@ -7,6 +7,7 @@ FaxFinder FF430 specs:
 - 2GB CF card on the IXP expansion bus, no IRQ
 - 10/100 ethernet (IXP's "EthB") with Micrel PHY on MDIO 1
 - Exar XR17D154 Quad UART chip on PCI "slot 13", IRQ on GPIO7
+- Four 56k MT5634SMI modem modules connected to the quad UART
 
 Working:
 - Boot to command line
