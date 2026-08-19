@@ -17,7 +17,7 @@ Working:
 - Exar PCI multiport serial chip (connected to modems)
 
 Not working:
-- DS1820 RTC. This driver doesn't seem to exist in the kernel anymore and will require investigating what GPIO pins are in use.
+- DS1820 RTC. This will require setting up GPIO based SPI investigating what GPIO pins are in use.
 - Pull MAC address (and maybe even IP address) from RedBoot config. This one should be easy, just need to parse /dev/mtdblock1
 - Boot from internal flash. This shouldn't be hard in theory but I have not tried yet. TFTP boot works fine.
 
