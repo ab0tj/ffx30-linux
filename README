@@ -14,10 +14,9 @@ Working:
 - CF card connected to IXP430 expansion bus in polling mode
 - Ethernet
 - RedBoot / FIS flash chip
-- Exar PCI multiport serial chip (connected to modems) TX
+- Exar PCI multiport serial chip (connected to modems)
 
 Not working:
-- Exar serial RX. Sometimes bytes are decoded, but they're corrupted or have framing errors.
 - DS1820 RTC. This driver doesn't seem to exist in the kernel anymore and will require investigating what GPIO pins are in use.
 - Pull MAC address (and maybe even IP address) from RedBoot config. This one should be easy, just need to parse /dev/mtdblock1
 - Boot from internal flash. This shouldn't be hard in theory but I have not tried yet. TFTP boot works fine.
@@ -27,5 +26,7 @@ Included files:
 - Kernel patches and device tree
 - A minimal /sbin/init for busybox
 - The MultiTech custom Exar driver for Linux 2.4.27
+- Patch to update the modern Exar driver to work with this implementation of the hardware
+- Notes from investigating various issues
 
 Please submit a pull request or contact me if you have any interest in fixing the remaining issues or have gotten them working.

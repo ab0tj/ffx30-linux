@@ -1,0 +1,206 @@
+diff --git a/arch/arm/boot/dts/intel-ixp42x-ff430.dts b/arch/arm/boot/dts/intel-ixp42x-ff430.dts
+index 51f0dca3f..09e80e6ac 100644
+--- a/arch/arm/boot/dts/intel-ixp42x-ff430.dts
++++ b/arch/arm/boot/dts/intel-ixp42x-ff430.dts
+@@ -67,6 +67,29 @@ ide@1,0 {
+ 
+ 	                	status = "okay";
+             		};
++
++			modem-reset@3,0 {
++				compatible = "multitech,ff430-modem-reset";
++
++				/*
++				 * Modem reset latch on expansion-bus chip select 3.
++				 * Matches the stock driver's CS3 value 0xbfff0003.
++				 */
++				intel,ixp4xx-eb-t1 = <3>;
++				intel,ixp4xx-eb-t2 = <3>;
++				intel,ixp4xx-eb-t3 = <15>;
++				intel,ixp4xx-eb-t4 = <3>;
++				intel,ixp4xx-eb-t5 = <15>;
++				intel,ixp4xx-eb-cycle-type = <0>;
++				intel,ixp4xx-eb-byte-access-on-halfword = <0>;
++				intel,ixp4xx-eb-mux-address-and-data = <0>;
++				intel,ixp4xx-eb-ahb-split-transfers = <0>;
++				intel,ixp4xx-eb-write-enable = <1>;
++				intel,ixp4xx-eb-byte-access = <1>;
++
++				reg = <3 0x00000000 0x00000200>;
++				status = "okay";
++			};
+ 		};
+ 
+ 		/* EthB: Connected to Micrel PHY */
+diff --git a/drivers/tty/serial/8250/8250_exar.c b/drivers/tty/serial/8250/8250_exar.c
+index a38820a1c..56ffb3dc1 100644
+--- a/drivers/tty/serial/8250/8250_exar.c
++++ b/drivers/tty/serial/8250/8250_exar.c
+@@ -11,6 +11,7 @@
+ #include <linux/io.h>
+ #include <linux/kernel.h>
+ #include <linux/module.h>
++#include <linux/of.h>
+ #include <linux/pci.h>
+ #include <linux/property.h>
+ #include <linux/serial_core.h>
+@@ -18,6 +19,7 @@
+ #include <linux/slab.h>
+ #include <linux/string.h>
+ #include <linux/tty.h>
++#include <linux/tty_flip.h>
+ #include <linux/8250_pci.h>
+ #include <linux/delay.h>
+ 
+@@ -362,15 +364,149 @@ pci_connect_tech_setup(struct exar8250 *priv, struct pci_dev *pcidev,
+ 	return default_setup(priv, pcidev, idx, offset, port);
+ }
+ 
++static void xr17d15x_receive_char(struct uart_8250_port *up, u8 lsr, u8 ch)
++{
++	struct uart_port *port = &up->port;
++	char flag = TTY_NORMAL;
++
++	port->icount.rx++;
++	lsr |= up->lsr_saved_flags;
++	up->lsr_saved_flags = 0;
++
++	if (unlikely(lsr & UART_LSR_BRK_ERROR_BITS)) {
++		if (lsr & UART_LSR_BI) {
++			lsr &= ~(UART_LSR_FE | UART_LSR_PE);
++			port->icount.brk++;
++			if (uart_handle_break(port))
++				return;
++		} else if (lsr & UART_LSR_PE) {
++			port->icount.parity++;
++		} else if (lsr & UART_LSR_FE) {
++			port->icount.frame++;
++		}
++		if (lsr & UART_LSR_OE)
++			port->icount.overrun++;
++
++		lsr &= port->read_status_mask;
++		if (lsr & UART_LSR_BI)
++			flag = TTY_BREAK;
++		else if (lsr & UART_LSR_PE)
++			flag = TTY_PARITY;
++		else if (lsr & UART_LSR_FE)
++			flag = TTY_FRAME;
++	}
++
++	if (uart_prepare_sysrq_char(port, ch))
++		return;
++
++	uart_insert_char(port, lsr, UART_LSR_OE, ch, flag);
++}
++
++static void xr17d15x_receive_chars(struct uart_8250_port *up,
++				   struct exar8250 *priv)
++{
++	struct uart_port *port = &up->port;
++	u8 __iomem *fifo = port->membase + 0x180;
++	unsigned int count = 32;
++	u32 value;
++	u8 lsr;
++
++	/* Required before accessing the special RX FIFO-with-status window. */
++	readl(priv->virt + 0x8c);
++
++	while (count--) {
++		value = readl(fifo);
++
++		lsr = value;
++		if (!(lsr & UART_LSR_DR))
++			break;
++		xr17d15x_receive_char(up, lsr, value >> 8);
++
++		lsr = value >> 16;
++		if (!(lsr & UART_LSR_DR))
++			break;
++		xr17d15x_receive_char(up, lsr, value >> 24);
++	}
++
++	tty_flip_buffer_push(&port->state->port);
++}
++
++static int pci_xr17d15x_handle_irq(struct uart_port *port)
++{
++	struct uart_8250_port *up = up_to_u8250p(port);
++	struct exar8250 *priv = port->private_data;
++	unsigned int channel =
++		(port->membase - (u8 __iomem *)priv->virt) / 0x200;
++	u32 global = readl(priv->virt + UART_EXAR_INT0);
++	unsigned int cause = (global >> (channel * 3 + 8)) & 0x7;
++	unsigned long flags;
++	u8 lsr;
++
++	if (cause == 1 || cause == 2) {
++		spin_lock_irqsave(&port->lock, flags);
++		xr17d15x_receive_chars(up, priv);
++		serial8250_modem_status(up);
++		uart_unlock_and_check_sysrq_irqrestore(port, flags);
++		return 1;
++	}
++
++	/*
++	 * The global cause groups MSR, RTS/CTS, DTR/DSR, XON/XOFF and
++	 * special-character status together.  The individual IIR can report
++	 * no interrupt for this cause on the FF430, just as it does for RX
++	 * timeout, so explicitly read MSR as the MultiTech driver did.
++	 */
++	if (cause == 4) {
++		spin_lock_irqsave(&port->lock, flags);
++		serial_port_in(port, UART_IIR);
++		serial8250_modem_status(up);
++		uart_unlock_and_check_sysrq_irqrestore(port, flags);
++		return 1;
++	}
++
++	/*
++	 * Do not pass TX interrupts through serial8250_handle_irq().  That
++	 * helper drains RHR whenever LSR reports data-ready, even when IIR's
++	 * cause is TX, which would reintroduce unreliable byte-wide RX reads.
++	 */
++	if (cause == 3) {
++		spin_lock_irqsave(&port->lock, flags);
++		serial_port_in(port, UART_IIR);
++		lsr = serial_port_in(port, UART_LSR);
++		serial8250_modem_status(up);
++		if ((lsr & UART_LSR_THRE) && (up->ier & UART_IER_THRI))
++			serial8250_tx_chars(up);
++		uart_unlock_and_check_sysrq_irqrestore(port, flags);
++		return 1;
++	}
++
++	return 0;
++}
++
+ static int
+ pci_xr17c154_setup(struct exar8250 *priv, struct pci_dev *pcidev,
+ 		   struct uart_8250_port *port, int idx)
+ {
++	struct device_node *np;
+ 	unsigned int offset = idx * 0x200;
+ 	unsigned int baud = 921600;
++	int ret;
+ 
+ 	port->port.uartclk = baud * 16;
+-	return default_setup(priv, pcidev, idx, offset, port);
++	ret = default_setup(priv, pcidev, idx, offset, port);
++	if (ret)
++		return ret;
++
++	/* The alternate IRQ and RX FIFO path is specific to the FF430. */
++	np = of_find_compatible_node(NULL, NULL,
++				     "multitech,ff430-modem-reset");
++	if (np) {
++		of_node_put(np);
++		port->port.private_data = priv;
++		port->port.handle_irq = pci_xr17d15x_handle_irq;
++	}
++
++	return 0;
+ }
+ 
+ static void setup_gpio(struct pci_dev *pcidev, u8 __iomem *p)
+
