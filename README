@@ -15,9 +15,10 @@ Working:
 - Ethernet
 - RedBoot / FIS flash chip
 - Exar PCI multiport serial chip (connected to modems)
+- All four MT5634SMI modems, including simultaneous traffic
+- DS1302 real-time clock
 
 Not working:
-- DS1820 RTC. This will require setting up GPIO based SPI investigating what GPIO pins are in use.
 - Pull MAC address (and maybe even IP address) from RedBoot config. This one should be easy, just need to parse /dev/mtdblock1
 - Boot from internal flash. This shouldn't be hard in theory but I have not tried yet. TFTP boot works fine.
 
@@ -27,6 +28,13 @@ Included files:
 - A minimal /sbin/init for busybox
 - The MultiTech custom Exar driver for Linux 2.4.27
 - Patch to update the modern Exar driver to work with this implementation of the hardware
+- Patch adding LSB-first transfers to the Linux 5.15 spi-gpio driver
+- Patch allowing the DS1302 CE-inactive interval before its first access
 - Notes from investigating various issues
+
+The DS1302 is connected as a three-wire, LSB-first SPI device using
+GPIO2 for SCLK, GPIO4 for bidirectional I/O, and GPIO5 for active-high
+CE. The wiring was recovered from the stock kernel image. See FF430.md
+for the driver quirks, modem reset requirement, and validation details.
 
 Please submit a pull request or contact me if you have any interest in fixing the remaining issues or have gotten them working.
